@@ -4,10 +4,13 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"log"
 	"net/http"
+	"net/url"
 	"os"
 	"time"
 	"github.com/fatih/color"
+	"github.com/joho/godotenv"
 )
 
 type Weather struct {
@@ -35,36 +38,63 @@ type Weather struct {
 	} `json:"forecast"`
 }
 
-func main() {
-
-	q := "Tampa"
-	if len(os.Args) >= 2 {
-		q = os.Args[1]
+func getAPIKey() (string, error) {
+	godotenv.Load()
+	
+	key := os.Getenv("WEATHER_API_KEY")
+	if key == "" {
+		return "", fmt.Errorf("WEATHER_API_KEY environment variable not set. Create a .env file or set the environment variable")
 	}
 	
-	key := "***REMOVED***"
-	res, err := http.Get("http://api.weatherapi.com/v1/forecast.json?key=" + key + "&q=" + q + "&aqi=no&days=1&alerts=no")
+	return key, nil
+}
+
+func fetchWeather(apiKey, location string) (*Weather, error) {
+	client := &http.Client{
+		Timeout: 10 * time.Second,
+	}
+	
+	baseURL := "https://api.weatherapi.com/v1/forecast.json"
+	params := url.Values{}
+	params.Add("key", apiKey)
+	params.Add("q", location)
+	params.Add("aqi", "no")
+	params.Add("days", "1")
+	params.Add("alerts", "no")
+	
+	fullURL := baseURL + "?" + params.Encode()
+	
+	res, err := client.Get(fullURL)
 	if err != nil {
-		panic(err)
+		return nil, fmt.Errorf("error making API request: %v", err)
 	}
 	defer res.Body.Close()
 
 	if res.StatusCode != 200 {
-		panic("Weather API not available.")
+		return nil, fmt.Errorf("weather API returned status %d. Check your API key and location", res.StatusCode)
 	}
 
 	body, err := io.ReadAll(res.Body)
 	if err != nil {
-		panic(err)
+		return nil, fmt.Errorf("error reading response: %v", err)
 	}
 	
 	var weather Weather
 	err = json.Unmarshal(body, &weather)
 	if err != nil {
-		panic(err)
+		return nil, fmt.Errorf("error parsing weather data: %v", err)
 	}
+	
+	return &weather, nil
+}
 
-	location, current, hours := weather.Location, weather.Current, weather.Forecast.Forecastday[0].Hour
+func displayWeather(weather *Weather) error {
+	if len(weather.Forecast.Forecastday) == 0 {
+		return fmt.Errorf("no forecast data available")
+	}
+	
+	location, current := weather.Location, weather.Current
+	hours := weather.Forecast.Forecastday[0].Hour
 
 	fmt.Printf(
 		"%s, %s: %.0fF, %s\n",
@@ -91,6 +121,28 @@ func main() {
 		} else {
 			color.Red(message)
 		}
+	}
+	
+	return nil
+}
 
+func main() {
+	location := "Tampa"
+	if len(os.Args) >= 2 {
+		location = os.Args[1]
+	}
+	
+	key, err := getAPIKey()
+	if err != nil {
+		log.Fatalf("Error getting API key: %v", err)
+	}
+	
+	weather, err := fetchWeather(key, location)
+	if err != nil {
+		log.Fatalf("%v", err)
+	}
+	
+	if err := displayWeather(weather); err != nil {
+		log.Fatalf("Error displaying weather: %v", err)
 	}
 }
